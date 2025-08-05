@@ -6,10 +6,10 @@ This file contains functions for training a dataset and performing experiments.
 
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow.keras import layers
-from tensorflow.keras.losses import SparseCategoricalCrossentropy
-from tensorflow.keras.losses import BinaryCrossentropy
-from tensorflow.keras.layers import Normalization
+from keras import layers
+from keras.losses import SparseCategoricalCrossentropy
+from keras.losses import BinaryCrossentropy
+from keras.layers import Normalization
 
 import numpy
 import pandas as pd
@@ -50,6 +50,17 @@ trainmetrics_dict = {}
 
 
 def dataframe_to_tf_dataset(input_dataframe, CLASS_COL):
+    """
+    Converts a pandas DataFrame into a TensorFlow Dataset suitable for model training,
+    separating the specified class label column from the features.
+
+    Args:
+        input_dataframe (pd.DataFrame): The input DataFrame containing features and labels.
+        CLASS_COL (str): The name of the column containing class labels.
+
+    Returns:
+        tf.data.Dataset: A TensorFlow Dataset of (features, labels) tuples.
+    """
     dataframe = input_dataframe.copy()
     class_labels = dataframe.pop(CLASS_COL)
 
@@ -60,11 +71,24 @@ def dataframe_to_tf_dataset(input_dataframe, CLASS_COL):
 
 
 def dataset_nn_prepare(training_df, training_dataset):
+    """
+    Prepares Keras model input layers and encoded feature tensors from a training DataFrame and dataset.
+    Args:
+        training_df (pd.DataFrame): The DataFrame containing the training data, where each column represents a feature.
+        training_dataset (tf.data.Dataset): The TensorFlow dataset corresponding to the training data, used for feature encoding.
+    Returns:
+        tuple: A tuple containing:
+            - all_inputs (list): List of Keras Input layers, one for each feature column in the DataFrame.
+            - all_features (tf.Tensor): Concatenated tensor of all encoded features, suitable as model input.
+    Notes:
+        - This function assumes the existence of an `encode_numerical_feature` function for feature encoding.
+        - All features are concatenated into a single tensor named 'All_Inputs'.
+    """
     all_inputs = []
     # Prepare model inputs from dataset.
     for column_name in training_df.columns:
         data_type = training_df[column_name].dtype
-        model_input = keras.Input(shape = (1,), name = column_name, dtype = data_type)
+        model_input = keras.Input(shape=(1,), name = column_name, dtype = data_type)
         all_inputs.append(model_input)
 
     encoded_features = []
@@ -79,6 +103,17 @@ def dataset_nn_prepare(training_df, training_dataset):
 
 
 def encode_numerical_feature(feature, col_name, dataset):
+    """
+    Encodes a numerical feature using normalization.
+    This function creates a Keras Normalization layer, adapts it to the distribution of the specified column in the provided dataset, and applies the normalization to the given feature tensor.
+    Args:
+        feature (tf.Tensor): The input tensor representing the feature to be normalized.
+        col_name (str): The name of the column in the dataset to be normalized.
+        dataset (tf.data.Dataset): The dataset containing the feature column, where each element is a tuple (features, label).
+    Returns:
+        tf.Tensor: The normalized feature tensor.
+    """
+    
     normalizer = Normalization(axis = None, name = (col_name + '_Normalised'))
 
     # Prepare a Dataset that only yields the feature.
@@ -91,6 +126,25 @@ def encode_numerical_feature(feature, col_name, dataset):
 
 
 def dataset_create_model(model_inputs, model_features, output_dimension, tuned_hyperparameters):
+    """
+    Creates and compiles a Keras model based on the provided input layer, feature layer, output dimension, 
+    and a dictionary of tuned hyperparameters.
+    The function dynamically builds a feedforward neural network with a variable number of hidden layers, 
+    units, and activations as specified in `tuned_hyperparameters`. The output layer's activation and loss 
+    function are chosen based on the `output_dimension` (softmax/SparseCategoricalCrossentropy for 
+    multi-class, sigmoid/BinaryCrossentropy for binary).
+    Args:
+        model_inputs (tf.keras.layers.Layer): The input layer for the model.
+        model_features (tf.keras.layers.Layer): The feature extraction or preprocessing layer.
+        output_dimension (int): The number of output units/classes.
+        tuned_hyperparameters (dict): Dictionary containing hyperparameters such as:
+            - 'num_layers': Number of hidden layers.
+            - 'Layer_{i}': Number of units in the i-th hidden layer.
+            - 'Activation_{i}': Activation function for the i-th hidden layer.
+            - 'Dropout': Dropout rate to apply after the last hidden layer.
+    Returns:
+        tf.keras.Model: The compiled Keras model ready for training.
+    """
     # Change model parameters depending on the output dimension.
     if output_dimension >= 3:
         activation_output = 'softmax'
@@ -115,6 +169,25 @@ def dataset_create_model(model_inputs, model_features, output_dimension, tuned_h
 
 
 def dataset_nn_train(model, training_dataset, validation_dataset, num_epochs, spl_active, batchSize = None, training_df = None, saved_name = None):
+    """
+    Trains a neural network model on the provided dataset with optional self-paced learning and custom callbacks.
+    Args:
+        model (tf.keras.Model): The neural network model to be trained.
+        training_dataset (tuple or tf.data.Dataset): Training data. If `spl_active` is True, should be a tuple (inputs, targets); otherwise, a dataset.
+        validation_dataset (tuple or tf.data.Dataset): Validation data for evaluating the model during training.
+        num_epochs (int): Number of epochs to train the model.
+        spl_active (bool): Flag to activate self-paced learning (SPL) with custom callback behavior.
+        batchSize (int, optional): Batch size for training. Required if `spl_active` is True.
+        training_df (pd.DataFrame, optional): DataFrame containing training data, used by the custom callback if SPL is active.
+        saved_name (str, optional): If provided, saves the trained model with this name.
+    Returns:
+        model (tf.keras.Model): The trained model.
+        batch_loss (list): List of batch losses collected during training.
+        train_metrics (list): List of training loss values for each epoch.
+    Side Effects:
+        - Prints training progress and model save confirmation.
+        - Saves the trained model to disk if `saved_name` is provided.
+    """
     batch_loss = []
     custom_callback = Custom_Callback(batch_loss, spl_active, training_dataset, training_df, batchSize)
 
@@ -134,6 +207,22 @@ def dataset_nn_train(model, training_dataset, validation_dataset, num_epochs, sp
 
 
 def dataset_nn_predict(model, test_data, class_label_col, CLASS_LABELS):
+    """
+    Performs prediction on a test dataset using a neural network model and computes classification metrics.
+    Args:
+        model: Trained neural network model with a `predict` method.
+        test_data (pd.DataFrame): DataFrame containing the test data, including the class label column.
+        class_label_col (str): Name of the column in `test_data` containing the true class labels.
+        CLASS_LABELS (list): List of possible class labels.
+    Returns:
+        tuple:
+            - metrics (dict): Dictionary containing classification metrics computed from the predictions.
+            - prediction_data (pd.DataFrame): DataFrame containing the actual labels, predicted labels, and (for multiclass) prediction probabilities for each class.
+    Notes:
+        - For multiclass classification, the function outputs probabilities for each class and the predicted label.
+        - For binary classification, the function outputs the predicted probability and the rounded prediction.
+        - The function modifies `test_data` in place by dropping the class label column.
+    """
     actual_labels = test_data[class_label_col]
     test_data.drop(columns = [class_label_col], inplace = True)
 
