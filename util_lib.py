@@ -8,7 +8,7 @@ import tkinter as tk
 from tkinter import filedialog
 
 
-def select_filename_dialog(start_directory, dialog_title, multiple_files = False):
+def select_filename_dialog(start_directory, dialog_title, multiple_files=False):
     root = tk.Tk()
     root.withdraw()  # Hide the root window
 
